@@ -14,6 +14,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
@@ -21,6 +22,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -37,6 +39,7 @@ import com.bumptech.glide.request.RequestOptions;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.kun.musicappdemo.bean.Song;
+import com.kun.musicappdemo.utils.GetSomePermissionUtil;
 import com.kun.musicappdemo.utils.MusicNotificationUtil;
 import com.kun.musicappdemo.utils.MusicUtil;
 import com.kun.musicappdemo.view.MyMusicPlayBottomSheetDialog;
@@ -45,9 +48,17 @@ import java.util.ArrayList;
 import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity implements ViewSwitcher.ViewFactory{
+    //共同使用的参数
+    private ArrayList<Song> allSongs;//全部歌曲
+    private Song song;//选中歌曲
+    private final RequestOptions options = new RequestOptions().circleCropTransform();//圆形图片的RequestOptions
+    private boolean isPlaying = false;//是否歌曲在播放状态的标志
+    private int playingPos = -1;//记录当前播放歌曲的位置
+
     //播放列表页的相关参数
     private RecyclerView songsRv;
     private SongsRVAdapter songsRVAdapter;
+    private View curSelectedView;//记录当前选中的 songsRv 的itemView
     //播放列表页的列表 SongsRV 适配器
     private class SongsRVAdapter extends RecyclerView.Adapter<SongsRVAdapter.ViewHolder> {
 
@@ -65,25 +76,47 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
             holder.songName.setText(song.getTitle());
             holder.singer.setText(song.getArtist());
 
-            //根据是否是当前播放位置，选择显示状态
+            //当滑动 RVAdapter 更新是否为选中视图
             if (position != playingPos) {//未选中状态
                 holder.playingMask.setVisibility(View.INVISIBLE);
                 holder.songPos.setTextColor(Color.BLACK);
                 holder.songName.setTextColor(Color.BLACK);
                 holder.singer.setTextColor(Color.BLACK);
-            } else {//选中状态
+            } else {
+                curSelectedView = holder.itemView;//刷新时记录当前位置的itemView
                 holder.playingMask.setVisibility(View.VISIBLE);
                 holder.songPos.setTextColor(getResources().getColor(R.color.green_playing));
                 holder.songName.setTextColor(getResources().getColor(R.color.green_playing));
                 holder.singer.setTextColor(getResources().getColor(R.color.green_playing));
             }
+
             holder.rootView.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    //这里若是连续点击同个位置，正在播放时，不响应，停止时，则继续播放
                     if (playingPos == position) {
+                        if (!isPlaying) {
+                            continuePlay();
+                        }
                         return;
                     }
+
+                    //更新正在播放的位置
                     playingPos = position;
+
+                    //更新选中视图
+                    if(curSelectedView != null) {
+                        (curSelectedView.findViewById(R.id.playing_mask)).setVisibility(View.INVISIBLE);
+                        ((TextView)curSelectedView.findViewById(R.id.song_pos)).setTextColor(Color.BLACK);
+                        ((TextView)curSelectedView.findViewById(R.id.song_name)).setTextColor(Color.BLACK);
+                        ((TextView)curSelectedView.findViewById(R.id.singer)).setTextColor(Color.BLACK);
+                    }
+                    curSelectedView = holder.rootView;
+                    (curSelectedView.findViewById(R.id.playing_mask)).setVisibility(View.VISIBLE);
+                    ((TextView)curSelectedView.findViewById(R.id.song_pos)).setTextColor(getResources().getColor(R.color.green_playing));
+                    ((TextView)curSelectedView.findViewById(R.id.song_name)).setTextColor(getResources().getColor(R.color.green_playing));
+                    ((TextView)curSelectedView.findViewById(R.id.singer)).setTextColor(getResources().getColor(R.color.green_playing));
+
                     //播放歌曲
                     play();
 
@@ -111,16 +144,9 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         }
     }
     private ImageSwitcher songAlbumImgSwitcher;
-    private BitmapDrawable bitmapDrawable;
     private ObjectAnimator objectAnimator;//管理songAlbum的旋转动画
     private TextView songName;
     private ImageView playControl;
-    private ArrayList<Song> allSongs;
-    private Song song;
-    private RequestOptions options = new RequestOptions().circleCropTransform();//圆形图片的RequestOptions
-    private Bitmap artworkFromFile;//读取内存图片的bitmap
-    private boolean isPlaying = false;//是否歌曲在播放状态的标志
-    private int playingPos = -1;//记录当前播放歌曲的位置
 
     //绑定音乐播放后台服务的相关参数
     private MusicService.MusicControl musicControl;//为服务器返回的交互Binder类
@@ -137,6 +163,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         }
     }
 
+    //接收通知 remoteViews 的控件发来的广播
     private MusicBroadcastReceiver musicBroadcastReceiver;
 
     //音乐播放详情页的相关参数
@@ -161,9 +188,15 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
             Bundle bundle=msg.getData();//获取从子线程发送过来的音乐播放进度
             //获取当前进度currentPosition
             int currentPosition=bundle.getInt("currentPosition");
-            //对进度条进行设置
+            //对进度条进行更新
             seekBar.setProgress(currentPosition);
+            //对已播放的时间进行更新
             playedTime.setText(MusicUtil.getTime(bundle.getInt("currentPosition")));
+            //这里添加进度结束时，自动切换下一首歌曲，这里猜测 song.getDuration() mediaPlay.getDuration 不一致，可能 mediaPlay 操作
+//            Log.d("lance", "onProgressChanged: "   + song.getDuration()+ "  "+ seekBar.getProgress());
+//            if (song.getDuration() - seekBar.getProgress() < 666) {//当时差来到这个范围，就可切换，因为相等是不可能的，精度太大了
+//                nextSong();
+//            }
         }
     };
 
@@ -172,6 +205,9 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         super.onCreate(savedInstanceState);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);//状态栏字体颜色
         setContentView(R.layout.activity_main);
+
+        //申请访问外部存储通知权限
+        GetSomePermissionUtil.verifyStoragePermissions(this);
 
         conn=new MyServiceConn();//创建服务连接对象
         bindService(new Intent(this,MusicService.class),conn,BIND_AUTO_CREATE);//绑定服务
@@ -182,6 +218,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
 
         initPlayDetailPageView();//初始化播放详情页的UI
 
+        //配置 musicBroadcastReceiver
         musicBroadcastReceiver = new MusicBroadcastReceiver();
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(MusicNotificationUtil.SMALL_REMOTEVIEWS_CONTROL);
@@ -193,6 +230,8 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         intentFilter.addAction(MusicNotificationUtil.BIG_REMOTEVIEWS_CANCEL);
         registerReceiver(musicBroadcastReceiver,intentFilter);
 
+        //创建通知渠道，及展示通知
+        MusicNotificationUtil.createNotificationChannel(this);
         MusicNotificationUtil.showNotification(this);
 
     }
@@ -202,12 +241,31 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         super.onDestroy();
         musicControl.pausePlay();//音乐暂停播放
         unbindService(conn);//解绑服务
-        unregisterReceiver(musicBroadcastReceiver);
-        handler = null;
+        MusicNotificationUtil.cancelNotification();//取消通知
+        unregisterReceiver(musicBroadcastReceiver);//解除广播接收者
+        handler = null;//释放资源
+        objectAnimator.cancel();//对动画资源进行释放，防止内存泄漏
+        dialogObjectAnimator.cancel();//对动画资源进行释放，防止内存泄漏
     }
 
     @Override
-    public View makeView() {
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        //根据用户的授权情况，做出反应
+        if (requestCode == GetSomePermissionUtil.REQUEST_EXTERNAL_STORAGE ) {
+            if(grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                //授权成功，则重启 MainActivity
+                startActivity(new Intent(this,MainActivity.class));
+            } else {
+                //没有授权，则直接退出APP
+                Toast.makeText(this,"no those permission,no APP",Toast.LENGTH_SHORT).show();
+                finish();//没有申请到权限直接退出APP
+            }
+        }
+    }
+
+    @Override
+    public View makeView() {//重写该方法，为 ImageSwitcher 提供图片暂存的地方
         ImageView imageView = new ImageView(this);
         imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);//设置保持纵横比居中缩放图像
         imageView.setLayoutParams(new ImageSwitcher.LayoutParams(
@@ -222,6 +280,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         songsRVAdapter = new SongsRVAdapter();
         songsRv.setAdapter(songsRVAdapter);
         songAlbumImgSwitcher = findViewById(R.id.song_album_imgSwitcher);
+        //songAlbumImgSwitcher 的配置
         songAlbumImgSwitcher.setFactory(this);
         songAlbumImgSwitcher.setInAnimation(AnimationUtils.loadAnimation(this,R.anim.in));
         songAlbumImgSwitcher.setOutAnimation(AnimationUtils.loadAnimation(this,R.anim.out));
@@ -234,10 +293,10 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
                     return;
                 }
                 //在show之前， mDialogBehavior，管理 bottomSheetDialog 弹出的效果
-                mDialogBehavior.setPeekHeight(ViewGroup.LayoutParams.MATCH_PARENT);//设置默认高度，折叠态
-                mDialogBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);//设置为展开状态
-                mDialogBehavior.setSkipCollapsed(true);//跳过折叠态
-                bottomSheetDialog.show();
+                //mDialogBehavior.setPeekHeight(0);//设置默认高度，折叠态//这句话好像没有发挥什么作用
+                mDialogBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);//设置为展开状态,
+                mDialogBehavior.setSkipCollapsed(true);//跳过折叠态b
+                bottomSheetDialog.show();//这里实现不了首次弹出的动画效果
             }
         });
         songName = findViewById(R.id.song_name);
@@ -267,11 +326,11 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         cancelPlayingPage.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                bottomSheetDialog.cancel();
+                bottomSheetDialog.cancel();//使用cancel()才有动画效果，dismiss()没有动画效果
             }
         });
         dialogAlbumImgSwitcher = dialogView.findViewById(R.id.dialog_album_imgSwitcher);
-        //...真的麻了，忘记初始化了
+        //...真的麻了，忘记初始化了。//songAlbumImgSwitcher 的配置
         dialogAlbumImgSwitcher.setFactory(this);
         dialogAlbumImgSwitcher.setInAnimation(AnimationUtils.loadAnimation(this,R.anim.in));
         dialogAlbumImgSwitcher.setOutAnimation(AnimationUtils.loadAnimation(this,R.anim.out));
@@ -289,7 +348,6 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
             @Override
             public void onClick(View v) {
                 nextSong();
-
             }
         });
         dialogPlayControl = dialogView.findViewById(R.id.dialog_play_control);
@@ -303,7 +361,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                //切换下一首
+
             }
 
             @Override
@@ -322,9 +380,8 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         bottomSheetDialog.setContentView(dialogView);
         bottomSheetDialog.setDismissWithAnimation(true);//设置 bottomSheetDialog 具备进场退场动画
         mDialogBehavior = BottomSheetBehavior.from((View) dialogView.getParent());
-        // ...dialogAlbumImgSwitcher
+
         dialogObjectAnimator= ObjectAnimator.ofFloat(dialogAlbumImgSwitcher, "rotation",0,360);
-        //...不解
         dialogObjectAnimator.setDuration(10000);
         dialogObjectAnimator.setInterpolator(new LinearInterpolator());
         dialogObjectAnimator.setRepeatCount(ObjectAnimator.INFINITE);
@@ -334,6 +391,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         dialogObjectAnimator.pause();
     }
 
+    //上一首歌
     private void preSong() {
         //当前播放歌曲为第一个位置，防止越界，不做执行，提示用户无上一首歌
         if (playingPos <= 0) {
@@ -343,8 +401,10 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         playingPos--;
         //开始播放
         play();
+        songsRVAdapter.notifyDataSetChanged();
     }
 
+    //下一首歌
     private void nextSong() {
         //当前播放歌曲为最后一个位置，防止越界，不做执行，提示用户无下一首歌
         if (playingPos >= allSongs.size() - 1) {
@@ -354,8 +414,10 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         playingPos++;
         //开始播放
         play();
+        songsRVAdapter.notifyDataSetChanged();
     }
 
+    //控制继续播放或停止
     private void controlPlay() {
         //app, 刚进入无歌曲时，点击无反应，提示用户，点歌
         if (songName.getText().toString().equals("no song")) {
@@ -371,29 +433,28 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         }
     }
 
-
-
+    //开始播放
     private void play() {
-
-        MusicNotificationUtil.showNotification(MainActivity.this);
-
         song = allSongs.get(playingPos);//更新歌曲
         musicControl.play(song.getUrl());//调用 Service 播放歌曲
 
         //同步UI
         playControl.setImageResource(R.drawable.ic_baseline_pause_circle_outline_24);
         dialogPlayControl.setImageResource(R.drawable.ic_baseline_pause_circle_outline_24);
+        //通知的UI
         MusicNotificationUtil.smallRemoteViews.setImageViewResource(R.id.play_control,R.drawable.ic_baseline_pause_circle_outline_24);
         MusicNotificationUtil.bigRemoteViews.setImageViewResource(R.id.play_control,R.drawable.ic_baseline_pause_circle_outline_24);
 
-        artworkFromFile = MusicUtil.getArtworkFromFile(MainActivity.this,song.getSongID(),song.getAlbumID());
+        //读取内存图片的bitmap
+        Bitmap artworkFromFile = MusicUtil.getArtworkFromFile(MainActivity.this, song.getSongID(), song.getAlbumID());
         //new BitmapDrawable 图片才不会缩小
         if (artworkFromFile != null) {
-            bitmapDrawable = new BitmapDrawable(getResources(), artworkFromFile);
+            //图片转换时需要用到
+            BitmapDrawable bitmapDrawable = new BitmapDrawable(getResources(), artworkFromFile);
             songAlbumImgSwitcher.setImageDrawable(bitmapDrawable);
             dialogAlbumImgSwitcher.setImageDrawable(bitmapDrawable);
-            MusicNotificationUtil.smallRemoteViews.setImageViewBitmap(R.id.album,artworkFromFile);
-            MusicNotificationUtil.bigRemoteViews.setImageViewBitmap(R.id.album,artworkFromFile);
+            MusicNotificationUtil.smallRemoteViews.setImageViewBitmap(R.id.album, artworkFromFile);
+            MusicNotificationUtil.bigRemoteViews.setImageViewBitmap(R.id.album, artworkFromFile);
         } else {
             songAlbumImgSwitcher.setImageResource(R.drawable.no_album_default_icon);
             dialogAlbumImgSwitcher.setImageResource(R.drawable.no_album_default_icon);
@@ -401,23 +462,23 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
             MusicNotificationUtil.bigRemoteViews.setImageViewResource(R.id.album,R.drawable.no_album_default_icon);
         }
 
-
         MusicNotificationUtil.smallRemoteViews.setTextViewText(R.id.song_name,song.getTitle());
         MusicNotificationUtil.smallRemoteViews.setTextViewText(R.id.singer,song.getArtist());
         MusicNotificationUtil.bigRemoteViews.setTextViewText(R.id.song_name,song.getTitle());
         MusicNotificationUtil.bigRemoteViews.setTextViewText(R.id.singer,song.getArtist());
-        MusicNotificationUtil.notifyNotification();
+        MusicNotificationUtil.notifyNotification();//通知刷新通知
 
         songName.setText(song.getTitle());
         dialogSongNameAndSinger.setText(song.getTitle() + "-" + song.getArtist());
         allTime.setText(MusicUtil.getTime(song.getDuration()));
         seekBar.setMax(song.getDuration());
-        songsRVAdapter.notifyDataSetChanged();
+        //songsRVAdapter.notifyDataSetChanged();
         if (objectAnimator.isPaused())objectAnimator.resume();
         if (dialogObjectAnimator.isPaused())dialogObjectAnimator.resume();
-
+        isPlaying = true;//更新歌曲播放状态
     }
 
+    //暂停播放
     private void pausePlay() {
         //同步暂停播放时的UI状态
         objectAnimator.pause();
@@ -432,6 +493,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         isPlaying = false;
     }
 
+    //继续播放
     private void continuePlay() {dialogObjectAnimator.resume();
         //同步继续播放时的UI状态
         objectAnimator.resume();
@@ -446,38 +508,33 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         isPlaying = true;
     }
 
+    //接收来自通知 RemoteViews 的广播
     class MusicBroadcastReceiver extends BroadcastReceiver {
 
         @Override
         public void onReceive(Context context, Intent intent) {
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.SMALL_REMOTEVIEWS_CONTROL)) {
                 controlPlay();
-                Toast.makeText(MainActivity.this,"test SMALL_REMOTEVIEWS_CONTROL",Toast.LENGTH_SHORT).show();
             }
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.SMALL_REMOTEVIEWS_NEXT_SONG)) {
                 nextSong();
-                Toast.makeText(MainActivity.this,"test SMALL_REMOTEVIEWS_NEXT_SONG",Toast.LENGTH_SHORT).show();
             }
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.SMALL_REMOTEVIEWS_CANCEL)) {
                 MusicNotificationUtil.cancelNotification();
-                Toast.makeText(MainActivity.this,"test SMALL_REMOTEVIEWS_CANCEL",Toast.LENGTH_SHORT).show();
             }
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.BIG_REMOTEVIEWS_PRE_SONG)) {
                 preSong();
-                Toast.makeText(MainActivity.this,"test BIG_REMOTEVIEWS_PRE_SONG",Toast.LENGTH_SHORT).show();
             }
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.BIG_REMOTEVIEWS_CONTROL)) {
                 controlPlay();
-                Toast.makeText(MainActivity.this,"test BIG_REMOTEVIEWS_CONTROL",Toast.LENGTH_SHORT).show();
             }
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.BIG_REMOTEVIEWS_NEXT_SONG)) {
                 nextSong();
-                Toast.makeText(MainActivity.this,"test BIG_REMOTEVIEWS_NEXT_SONG",Toast.LENGTH_SHORT).show();
             }
             if (Objects.equals(intent.getAction(), MusicNotificationUtil.BIG_REMOTEVIEWS_CANCEL)) {
                 MusicNotificationUtil.cancelNotification();
-                Toast.makeText(MainActivity.this,"test BIG_REMOTEVIEWS_CANCEL",Toast.LENGTH_SHORT).show();
             }
+            songsRVAdapter.notifyDataSetChanged();
         }
     }
 }

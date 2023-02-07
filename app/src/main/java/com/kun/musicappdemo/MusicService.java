@@ -36,7 +36,7 @@ public class MusicService extends Service {
     public void onCreate(){
         super.onCreate();
         //创建音乐播放器对象
-        player=new MediaPlayer();
+        player = new MediaPlayer();
     }
     //添加计时器用于设置音乐播放器中的播放进度条
     public void addTimer(){
@@ -61,7 +61,7 @@ public class MusicService extends Service {
                 }
             };
             //开始计时任务后的5毫秒，第一次执行task任务，以后每500毫秒（0.5s）执行一次
-            timer.schedule(task,5,500);
+            timer.schedule(task,500,500);//这里将任务稍微延迟执行，因为不正常测试一直快速退出进入，然后点击播放音乐，这里小概率出现 MediaPlayer 状态异常
         }
 
     }
@@ -100,6 +100,7 @@ public class MusicService extends Service {
         if(player.isPlaying()) player.stop();//停止播放音乐
         player.release();//释放占用的资源
         player=null;//将player置为空
+        timer = null;//为空java会回收资源，避免浪费
     }
 }
 

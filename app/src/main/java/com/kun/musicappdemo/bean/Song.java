@@ -29,7 +29,7 @@ public class Song {
     private String url;// 歌曲文件的全路径：
     private String year;// 歌曲文件的发行日期
     private int duration;// 歌曲的总播放时长
-    private Long size;// Int size
+    private Long size;// 歌曲文件的大小
 
     public Song() {
     }

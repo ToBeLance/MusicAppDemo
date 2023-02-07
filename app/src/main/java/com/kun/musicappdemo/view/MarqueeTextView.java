@@ -5,7 +5,7 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.widget.TextView;
 
-//TextView跑马灯效果
+//TextView简单的跑马灯效果
 public class MarqueeTextView extends TextView {
 
     public MarqueeTextView(Context context) {
