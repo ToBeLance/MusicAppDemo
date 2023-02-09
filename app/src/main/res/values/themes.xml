@@ -24,4 +24,11 @@
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowTranslucentStatus">true</item>
     </style>
+
+
+    <style name="MyBottomSheetDialogAnimation">
+        <item name="android:windowEnterAnimation">@anim/dialog_in</item>
+    </style>
+
+
 </resources>

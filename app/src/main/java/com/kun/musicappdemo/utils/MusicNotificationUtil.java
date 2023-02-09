@@ -41,7 +41,7 @@ public class MusicNotificationUtil {
         Intent intent = new Intent(context, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         PendingIntent pendingIntent = PendingIntent.getActivity(context,1, intent, PendingIntent.FLAG_UPDATE_CURRENT);//创建通知的点击后的跳转逻辑，这里跳转会MainActivity
-        builder.setSmallIcon(R.mipmap.ic_launcher_round)//状态栏的小图标，这个必须要设置，需要的是alpha图片，这里没有素材，使用AS自带图标
+        builder.setSmallIcon(R.drawable.music_demo_app_icon)//状态栏的小图标，这个必须要设置，需要的是alpha图片，这里没有素材，使用AS自带图标,后面手机又显示了，估计是手机的问题
                 .setCustomContentView(getSmallContentView(context))//自定义的通知的大样式
                 .setCustomBigContentView(getBigContentView(context))//自定义通知的小样式
                 .setContentIntent(pendingIntent)

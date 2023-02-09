@@ -243,7 +243,7 @@ public class MainActivity extends AppCompatActivity implements ViewSwitcher.View
         unbindService(conn);//解绑服务
         MusicNotificationUtil.cancelNotification();//取消通知
         unregisterReceiver(musicBroadcastReceiver);//解除广播接收者
-        handler = null;//释放资源
+        //handler = null;//释放资源
         objectAnimator.cancel();//对动画资源进行释放，防止内存泄漏
         dialogObjectAnimator.cancel();//对动画资源进行释放，防止内存泄漏
     }

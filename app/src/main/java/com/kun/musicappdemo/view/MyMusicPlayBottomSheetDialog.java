@@ -38,5 +38,8 @@ public class MyMusicPlayBottomSheetDialog extends BottomSheetDialog {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
 
+        //添加入场动画，退出也可以设置，不过默认已经满足需求
+        getWindow().setWindowAnimations(R.style.MyBottomSheetDialogAnimation);
+
     }
 }
